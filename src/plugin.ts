@@ -1,6 +1,8 @@
 
-import { Shape, Board } from '@penpot/plugin-types';
-import type { PluginUIEvent, DeckEvent, CardField } from './model';
+import type { Shape, Board, Text } from '@penpot/plugin-types';
+import { parseFieldName } from './fieldMetadata';
+import { fitTextToBox, type FittableText } from './textFit';
+import type { PluginUIEvent, DeckEvent, CardField, ForgeWarning } from './model';
 
 
 export const cardSizes = [
@@ -53,7 +55,7 @@ function findFields(board: Board, fields: CardField[]) {
         let child = board.children[i];
         if (isValidField(child)) {
             let type = (child["type"] == "text") ? "text" : "image";
-            fields.push({ "name": child["name"], "type": type, "id": child.id });
+            fields.push({ ...parseFieldName(child["name"]), "type": type, "id": child.id });
         }
         if (child.hasOwnProperty("children")) {
             findFields((child as Board), fields);
@@ -82,6 +84,21 @@ function findByName(parent: Board, name: string): Shape | undefined {
             return child;
         } if ((child as Board).children?.length > 0) {
             let inner = findByName((child as Board), name);
+            if (inner) {
+                return inner;
+            }
+        }
+    }
+    return undefined;
+}
+
+function findByFieldName(parent: Board, fieldName: string): Shape | undefined {
+    for (let i = 0; i < parent.children.length; i++) {
+        let child = parent.children[i];
+        if ((child.hasOwnProperty("name")) && (parseFieldName(child["name"]).name === fieldName)) {
+            return child;
+        } if ((child as Board).children?.length > 0) {
+            let inner = findByFieldName((child as Board), fieldName);
             if (inner) {
                 return inner;
             }
@@ -177,16 +194,25 @@ function createImage(data: Uint8Array, mimeType: string, num: number, name: stri
 }
 
 
-function cloneCard(card: Shape, cardData: Record<string, any>, cardNum: string): Board {
+function cloneCard(card: Shape, cardData: Record<string, any>, cardNum: string, warnings: ForgeWarning[]): Board {
     const card2 = card.clone() as Board;
     card2.name = "card" + cardNum.padStart(2, '0');
 
     for (const prop in cardData) {
         if (Object.prototype.hasOwnProperty.call(cardData, prop)) {
-            const field = findByName(card2, prop);
+            const field = findByFieldName(card2, prop);
             if (field) {
                 if (field.type === "text") {
-                    field.characters = cardData[prop];
+                    const textField = field as Text;
+                    const metadata = parseFieldName(textField.name);
+                    textField.characters = cardData[prop];
+                    if (metadata.fit && !fitTextToBox((textField as unknown as FittableText), metadata.fit)) {
+                        warnings.push({
+                            cardNum: Number(cardNum),
+                            fieldName: metadata.name,
+                            minFontSize: metadata.fit.min,
+                        });
+                    }
                 } else {
                     const imageId = cardData[prop].split("|")[0];
                     const image = penpot.currentPage?.getShapeById(imageId);
@@ -287,8 +313,9 @@ function countRectsFit(rectA: { width: number, height: number }, rectB: { width:
     return countWidth * countHeight;
 }
 
-function forgeCards(cardsData: [], type: string, cutMarks: boolean) {
+function forgeCards(cardsData: Record<string, any>[], type: string, cutMarks: boolean) {
     console.log("start forgecards", type, cutMarks);
+    const warnings: ForgeWarning[] = [];
     let shapes = penpot.currentPage?.findShapes({ name: "Output" })
     if (shapes && (shapes.length > 0)) {
         shapes[0].remove();
@@ -328,7 +355,7 @@ function forgeCards(cardsData: [], type: string, cutMarks: boolean) {
 
     if ((type == "tabletop") || (type == "standard")) {
         for (let i = 0; i < cardsData.length; i++) {
-            card = cloneCard(baseFront, cardsData[i], String(i + 1));
+            card = cloneCard(baseFront, cardsData[i], String(i + 1), warnings);
             [x, y] = addCard(output, card, x, y);
         }
 
@@ -404,7 +431,7 @@ function forgeCards(cardsData: [], type: string, cutMarks: boolean) {
                     y += gapV;
                 }
 
-                card = cloneCard(baseFront, cardsData[numCard], String(numCard + 1));
+                card = cloneCard(baseFront, cardsData[numCard], String(numCard + 1), warnings);
                 [x, y] = addCard(page, card, x, y);
                 x += gapH;
                 numCard++;
@@ -422,7 +449,11 @@ function forgeCards(cardsData: [], type: string, cutMarks: boolean) {
     tmpFront?.remove();
     tmpBack?.remove();
 
-    penpot.closePlugin();
+    if (warnings.length > 0) {
+        penpot.ui.sendMessage({ "type": "FORGE_WARNINGS", "data": warnings });
+    } else {
+        penpot.closePlugin();
+    }
 }
 
 
@@ -454,5 +485,3 @@ penpot.ui.onMessage((message: PluginUIEvent) => {
 
 
 });
-
-

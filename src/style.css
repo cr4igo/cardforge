@@ -496,6 +496,18 @@ h3 {
   color: #6a3938;
 }
 
+#forge-fit-warnings {
+  margin-top: 1rem;
+  color: #6a3938;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+#forge-fit-warnings ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
 /****************************** HELP */
 #box-help .modal-buttons {
   justify-content: space-around;

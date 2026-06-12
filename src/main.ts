@@ -3,7 +3,8 @@ import "./style.css";
 
 import type {
   PluginUIEvent,
-  CardField
+  CardField,
+  ForgeWarning
 } from './model';
 
 
@@ -36,6 +37,8 @@ function initMessageListener() {
       loadCardFields();
     } else if (event.data.type == "IMAGE_CREATED") {
       updateImageInfo(event.data.data.num, event.data.data.name, event.data.data.id, event.data.data.imageId);
+    } else if (event.data.type == "FORGE_WARNINGS") {
+      showForgeWarnings(event.data.data);
     } else if (event.data.type == "PAGE_EMPTY") {
       if (event.data.data) {
         changeTab("create");
@@ -345,6 +348,7 @@ function reloadCardEntries() {
 }
 
 function showForgeCards(showForge: boolean) {
+  clearForgeWarnings();
   if (showForge) {
     document.getElementById("cards-container")?.classList.add("hidden");
     document.getElementById("box-forge")?.classList.remove("hidden");
@@ -359,10 +363,48 @@ function showForgeCards(showForge: boolean) {
 }
 
 function forgeCards() {
+  clearForgeWarnings();
   let cutMarks = (document.getElementById("forge-cut-marks") as HTMLInputElement).value;
   let type = (document.getElementById("forge-type") as HTMLInputElement).value;
 
   sendMessage({ type: 'forge-cards', data: { cardsData: cardsData, type: type, cutMarks: cutMarks } });
+}
+
+function clearForgeWarnings() {
+  const warningBox = document.getElementById("forge-fit-warnings");
+  if (warningBox) {
+    warningBox.classList.add("hidden");
+    warningBox.replaceChildren();
+  }
+}
+
+function showForgeWarnings(warnings: ForgeWarning[]) {
+  const warningBox = document.getElementById("forge-fit-warnings");
+  if (!warningBox) {
+    return;
+  }
+
+  warningBox.replaceChildren();
+
+  const title = document.createElement("strong");
+  title.innerText = "Some fitted text still overflows at its minimum size:";
+  warningBox.appendChild(title);
+
+  const list = document.createElement("ul");
+  for (const warning of warnings.slice(0, 10)) {
+    const item = document.createElement("li");
+    item.innerText = `Card ${String(warning.cardNum).padStart(2, '0')}, ${warning.fieldName}: min ${warning.minFontSize}`;
+    list.appendChild(item);
+  }
+  warningBox.appendChild(list);
+
+  if (warnings.length > 10) {
+    const more = document.createElement("div");
+    more.innerText = `And ${warnings.length - 10} more.`;
+    warningBox.appendChild(more);
+  }
+
+  warningBox.classList.remove("hidden");
 }
 
 
