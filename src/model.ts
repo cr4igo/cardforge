@@ -27,6 +27,9 @@ export interface ForgeWarning {
     cardNum: number;
     fieldName: string;
     minFontSize: number;
+    reason?: "box-overflow" | "long-word-overflow";
+    word?: string;
+    wordFontSize?: number;
 }
 
 

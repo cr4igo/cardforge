@@ -2,6 +2,7 @@
 import type { Shape, Board, Text } from '@penpot/plugin-types';
 import { parseFieldName } from './fieldMetadata';
 import { fitTextToBoxWithDetails, type FittableText } from './textFit';
+import { fitLongWordsToBox, type MeasureWordWidth, type WordFittableText } from './wordFit';
 import type { PluginUIEvent, DeckEvent, CardField, ForgeWarning } from './model';
 
 
@@ -105,6 +106,75 @@ function findByFieldName(parent: Board, fieldName: string): Shape | undefined {
         }
     }
     return undefined;
+}
+
+type TextMeasurementStyleKey =
+    "fontId" |
+    "fontFamily" |
+    "fontVariantId" |
+    "fontWeight" |
+    "fontStyle" |
+    "lineHeight" |
+    "letterSpacing" |
+    "textTransform" |
+    "textDecoration" |
+    "direction";
+
+const textMeasurementStyleKeys: TextMeasurementStyleKey[] = [
+    "fontId",
+    "fontFamily",
+    "fontVariantId",
+    "fontWeight",
+    "fontStyle",
+    "lineHeight",
+    "letterSpacing",
+    "textTransform",
+    "textDecoration",
+    "direction",
+];
+
+function copyTextMeasurementStyle(target: Text, source: Text, fontSize: number) {
+    const targetRecord = target as unknown as Record<TextMeasurementStyleKey, unknown>;
+    for (const key of textMeasurementStyleKeys) {
+        const value = source[key];
+        if (value !== "mixed" && value !== null && value !== undefined) {
+            targetRecord[key] = value;
+        }
+    }
+
+    target.growType = "auto-width";
+    target.fontSize = String(Number(fontSize.toFixed(2)));
+}
+
+function createWordWidthMeasurer(source: Text, measurementBoard: Board): MeasureWordWidth {
+    const cache = new Map<string, number>();
+
+    return (word: string, fontSize: number) => {
+        const cacheKey = `${word}\0${fontSize.toFixed(2)}`;
+        const cached = cache.get(cacheKey);
+        if (cached !== undefined) {
+            return { width: cached, mode: "penpot-cache" };
+        }
+
+        const measurementText = penpot.createText(word);
+        if (!measurementText) {
+            return undefined;
+        }
+
+        measurementText.name = "_CardForge word measurement text";
+        copyTextMeasurementStyle(measurementText, source, fontSize);
+        measurementBoard.appendChild(measurementText);
+
+        const width = (measurementText as unknown as FittableText).textBounds.width;
+        measurementText.remove();
+
+        if (!Number.isFinite(width) || width <= 0) {
+            return undefined;
+        }
+
+        cache.set(cacheKey, width);
+        return { width, mode: "penpot" };
+    };
 }
 
 
@@ -259,7 +329,49 @@ function fitCardText(card: Board, cardData: Record<string, any>, cardNum: string
                 cardNum: Number(cardNum),
                 fieldName: metadata.name,
                 minFontSize: metadata.fit.min,
+                reason: "box-overflow",
             });
+        }
+
+        let measurementBoard: Board | null = null;
+        try {
+            measurementBoard = penpot.createBoard();
+            measurementBoard.name = "_CardForge word measurement";
+            measurementBoard.x = -100000;
+            measurementBoard.y = -100000;
+            measurementBoard.resize(Math.max(textField.width * 4, 1000), Math.max(textField.height, 100));
+
+            const baseFontSize = textField.fontSize;
+            const wordFitResult = fitLongWordsToBox(
+                (textField as unknown as WordFittableText),
+                metadata.fit,
+                createWordWidthMeasurer(textField, measurementBoard),
+            );
+
+            console.log("[CardForge word-fit]", {
+                cardNum: Number(cardNum),
+                fieldName: metadata.name,
+                shapeName: metadata.shapeName,
+                characters: textField.characters,
+                boxWidth: textField.width,
+                baseFontSize,
+                adjustedWords: wordFitResult.words.length,
+                warnings: wordFitResult.warnings.length,
+                words: wordFitResult.words,
+            });
+
+            for (const warning of wordFitResult.warnings) {
+                warnings.push({
+                    cardNum: Number(cardNum),
+                    fieldName: metadata.name,
+                    minFontSize: warning.minFontSize,
+                    reason: "long-word-overflow",
+                    word: warning.word,
+                    wordFontSize: warning.wordFontSize,
+                });
+            }
+        } finally {
+            measurementBoard?.remove();
         }
     }
 }

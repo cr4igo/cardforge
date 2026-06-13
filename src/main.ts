@@ -393,7 +393,11 @@ function showForgeWarnings(warnings: ForgeWarning[]) {
   const list = document.createElement("ul");
   for (const warning of warnings.slice(0, 10)) {
     const item = document.createElement("li");
-    item.innerText = `Card ${String(warning.cardNum).padStart(2, '0')}, ${warning.fieldName}: min ${warning.minFontSize}`;
+    if (warning.reason === "long-word-overflow" && warning.word) {
+      item.innerText = `Card ${String(warning.cardNum).padStart(2, '0')}, ${warning.fieldName}: word "${warning.word}" still overflows at min ${warning.minFontSize}`;
+    } else {
+      item.innerText = `Card ${String(warning.cardNum).padStart(2, '0')}, ${warning.fieldName}: min ${warning.minFontSize}`;
+    }
     list.appendChild(item);
   }
   warningBox.appendChild(list);
