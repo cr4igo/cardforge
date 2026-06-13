@@ -357,6 +357,10 @@ h3 {
   padding-left: 25px;
 }
 
+.card-entry-highlight {
+  background: #dff8f2;
+}
+
 .forge-entry {
   width: 100%;
   height: 85px;
@@ -388,6 +392,92 @@ h3 {
 .deck-import .btn-primary {
   font-size: 0.9rem;
   height: 40px;
+}
+
+.reference-modal {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+  z-index: 50;
+}
+
+.reference-dialog {
+  background: #fff;
+  border: 1px solid #acd8d0;
+  box-shadow: 0 4px 16px rgba(21, 51, 60, 0.25);
+  font-family: 'Oswald', sans-serif;
+  min-height: 420px;
+  padding: 18px;
+  width: 760px;
+}
+
+.reference-dialog-header,
+.reference-controls,
+.reference-dialog-footer {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.reference-dialog-header h3 {
+  margin: 0;
+}
+
+.reference-close {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 1.3rem;
+}
+
+.reference-controls {
+  justify-content: flex-start;
+  margin: 18px 0;
+}
+
+.reference-controls select {
+  background: #fff;
+  border: 1px solid #acd8d0;
+  box-shadow: inset 0px 2px 2px rgba(21, 51, 60, 0.5);
+  font-family: 'Oswald', sans-serif;
+  height: 42px;
+  min-width: 260px;
+  padding: 0 0.8rem;
+}
+
+.reference-card-list {
+  border: 1px solid #efefef;
+  max-height: 270px;
+  overflow: auto;
+}
+
+.reference-card-row {
+  align-items: center;
+  border-bottom: 1px solid #efefef;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 35px 70px 1fr;
+  min-height: 50px;
+  padding: 0 14px;
+}
+
+.reference-card-row-header {
+  background: #efefef;
+  font-weight: bold;
+}
+
+.reference-card-preview {
+  border: 1px solid #acd8d0;
+  box-shadow: inset 0px 1px 2px rgba(21, 51, 60, 0.25);
+  padding: 8px 12px;
+}
+
+.reference-dialog-footer {
+  margin-top: 16px;
 }
 
 .card-actions {
@@ -438,8 +528,62 @@ h3 {
   line-height: 50px;
 }
 
+.card-source {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  line-height: 50px;
+  position: relative;
+  width: 50px;
+}
+
+.card-source-button {
+  background: transparent;
+  border: 0;
+  color: #1a5c52;
+  cursor: pointer;
+  font-family: 'Oswald', sans-serif;
+  font-size: 1.4rem;
+  font-weight: bold;
+}
+
+.card-source-popover {
+  background: #fff;
+  border: 1px solid #acd8d0;
+  box-shadow: 0 2px 8px rgba(21, 51, 60, 0.25);
+  display: none;
+  font-family: 'Alegreya', serif;
+  left: 35px;
+  line-height: 1.3;
+  min-width: 210px;
+  padding: 14px;
+  position: absolute;
+  top: 42px;
+  z-index: 10;
+}
+
+.card-source:hover .card-source-popover {
+  display: block;
+}
+
+.card-source-name {
+  color: #1a5c52;
+  font-weight: bold;
+  margin: 4px 0 12px;
+}
+
+.card-source-popover button {
+  background: transparent;
+  border: 0;
+  color: #1a5c52;
+  cursor: pointer;
+  font-family: 'Oswald', sans-serif;
+  font-weight: bold;
+  padding: 0;
+}
+
 .card-text {
-  width: 150px;
+  width: 360px;
   display: flex;
   align-items: center;
 }

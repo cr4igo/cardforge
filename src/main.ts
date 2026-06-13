@@ -24,6 +24,18 @@ interface DeckSource {
   cardCount: number;
 }
 
+interface ReferenceableCard {
+  cardId: string;
+  sourceRefId: string;
+  sourcePageId: string;
+  sourcePageName: string;
+  [key: string]: any;
+}
+
+let deckSources: DeckSource[] = [];
+let referenceableCards: ReferenceableCard[] = [];
+let pendingSourceHighlight: { refId?: string; cardId?: string } | null = null;
+
 function sendMessage(message: PluginUIEvent) {
   parent.postMessage(message, '*');
 }
@@ -43,6 +55,10 @@ function initMessageListener() {
       loadCardFields();
     } else if (event.data.type == "DECK_SOURCES") {
       loadDeckSources(event.data.data);
+    } else if (event.data.type == "REFERENCEABLE_CARDS") {
+      loadReferenceableCards(event.data.data);
+    } else if (event.data.type == "SOURCE_JUMPED") {
+      highlightSourceCard(event.data.data);
     } else if (event.data.type == "DECK_WARNING") {
       showDeckWarning(event.data.data?.message ?? "");
     } else if (event.data.type == "IMAGE_CREATED") {
@@ -183,6 +199,12 @@ function createCardEntry(num: number, cardData: any) {
   let entry = document.createElement("div");
   entry.classList.add("card-entry");
   entry.id = "card-entry-" + num;
+  if (pendingSourceHighlight && (
+    pendingSourceHighlight.refId === cardData.__cardRefId ||
+    pendingSourceHighlight.cardId === cardData.__cardId
+  )) {
+    entry.classList.add("card-entry-highlight");
+  }
 
   let actions = document.createElement("div");
   actions.classList.add("card-actions");
@@ -200,6 +222,7 @@ function createCardEntry(num: number, cardData: any) {
   let number = document.createElement("div");
   number.classList.add("card-num");
   number.innerText = String(num).padStart(2, '0');
+  entry.appendChild(createCardSourceCell(cardData));
   entry.appendChild(number);
 
   for (let i = 0; i < cardFields.length; i++) {
@@ -246,6 +269,54 @@ function createCardEntry(num: number, cardData: any) {
 
   entry.appendChild(actions);
   return entry;
+}
+
+function createCardSourceCell(cardData: any) {
+  const cell = document.createElement("div");
+  cell.classList.add("card-source");
+
+  if (!cardData.__isReferenced) {
+    return cell;
+  }
+
+  const button = document.createElement("button");
+  button.classList.add("card-source-button");
+  button.innerHTML = "&#8599;";
+  button.title = `Referenced from: ${cardData.__sourcePageName || "Unknown source"}`;
+  button.addEventListener("click", () => { jumpToCardSource(cardData) });
+  cell.appendChild(button);
+
+  const popover = document.createElement("div");
+  popover.classList.add("card-source-popover");
+  const source = document.createElement("strong");
+  source.innerText = "Referenced from:";
+  popover.appendChild(source);
+  const name = document.createElement("div");
+  name.classList.add("card-source-name");
+  name.innerText = cardData.__sourcePageName || "Unknown source";
+  popover.appendChild(name);
+  const jump = document.createElement("button");
+  jump.innerHTML = "&#8599; Jump to source";
+  jump.addEventListener("click", () => { jumpToCardSource(cardData) });
+  popover.appendChild(jump);
+  cell.appendChild(popover);
+
+  return cell;
+}
+
+function jumpToCardSource(cardData: any) {
+  if (!cardData.__sourcePageId || !cardData.__sourceRefId) {
+    return;
+  }
+
+  sendMessage({
+    type: 'jump-to-card-source',
+    data: {
+      sourcePageId: cardData.__sourcePageId,
+      sourceRefId: cardData.__sourceRefId,
+      cardId: cardData.__cardId,
+    },
+  });
 }
 
 function addEmptyCard() {
@@ -377,6 +448,25 @@ function reloadCardEntries() {
     let entry = createCardEntry(i + 1, cardsData[i]);
     cardList?.appendChild(entry);
   }
+
+  scrollToPendingHighlight();
+}
+
+function highlightSourceCard(data: any) {
+  pendingSourceHighlight = { refId: data?.refId, cardId: data?.cardId };
+  changeTab("cards");
+  scrollToPendingHighlight();
+}
+
+function scrollToPendingHighlight() {
+  if (!pendingSourceHighlight) {
+    return;
+  }
+
+  window.setTimeout(() => {
+    const entry = document.querySelector(".card-entry-highlight") as HTMLElement | null;
+    entry?.scrollIntoView({ block: "center" });
+  }, 0);
 }
 
 function showForgeCards(showForge: boolean) {
@@ -475,7 +565,11 @@ function changeCutMarks() {
 function initCards() {
   sendMessage({ type: 'load-card-fields', data: "" });
   document.getElementById("add-card")?.addEventListener("click", () => { addEmptyCard() });
-  document.getElementById("import-deck-button")?.addEventListener("click", () => { importDeckRefs() });
+  document.getElementById("import-deck-button")?.addEventListener("click", () => { openReferenceCardsDialog() });
+  document.getElementById("reference-deck-source")?.addEventListener("change", () => { requestReferenceableCards() });
+  document.getElementById("reference-cards-close")?.addEventListener("click", () => { closeReferenceCardsDialog() });
+  document.getElementById("reference-cards-cancel")?.addEventListener("click", () => { closeReferenceCardsDialog() });
+  document.getElementById("reference-cards-confirm")?.addEventListener("click", () => { confirmReferenceCards() });
   document.getElementById("forge-cards")?.addEventListener("click", () => { showForgeCards(true) });
 
   document.getElementById("box-forge-cancel")?.addEventListener("click", () => { showForgeCards(false) });
@@ -485,30 +579,125 @@ function initCards() {
 }
 
 function loadDeckSources(sources: DeckSource[]) {
+  deckSources = sources;
   const importBox = document.getElementById("import-deck");
   const select = document.getElementById("import-deck-source") as HTMLSelectElement | null;
+  const modalSelect = document.getElementById("reference-deck-source") as HTMLSelectElement | null;
   if (!importBox || !select) {
     return;
   }
 
   select.replaceChildren();
+  modalSelect?.replaceChildren();
   for (const source of sources) {
     const option = document.createElement("option");
     option.value = source.pageId;
     option.innerText = `${source.name} (${source.cardCount})`;
     select.appendChild(option);
+    modalSelect?.appendChild(option.cloneNode(true));
   }
 
   importBox.classList.toggle("hidden", sources.length === 0);
 }
 
-function importDeckRefs() {
-  const select = document.getElementById("import-deck-source") as HTMLSelectElement | null;
+function openReferenceCardsDialog() {
+  if (deckSources.length === 0) {
+    return;
+  }
+
+  const footerSelect = document.getElementById("import-deck-source") as HTMLSelectElement | null;
+  const modalSelect = document.getElementById("reference-deck-source") as HTMLSelectElement | null;
+  if (footerSelect?.value && modalSelect) {
+    modalSelect.value = footerSelect.value;
+  }
+
+  document.getElementById("box-reference-cards")?.classList.remove("hidden");
+  requestReferenceableCards();
+}
+
+function closeReferenceCardsDialog() {
+  document.getElementById("box-reference-cards")?.classList.add("hidden");
+}
+
+function requestReferenceableCards() {
+  const select = document.getElementById("reference-deck-source") as HTMLSelectElement | null;
   if (!select?.value) {
     return;
   }
 
-  sendMessage({ type: 'import-deck-refs', data: { sourcePageId: select.value } });
+  sendMessage({ type: 'load-referenceable-cards', data: { sourcePageId: select.value } });
+}
+
+function loadReferenceableCards(data: any) {
+  referenceableCards = Array.isArray(data?.cards) ? data.cards : [];
+  renderReferenceableCards();
+}
+
+function renderReferenceableCards() {
+  const list = document.getElementById("reference-card-list");
+  const count = document.getElementById("reference-card-count");
+  if (!list || !count) {
+    return;
+  }
+
+  list.replaceChildren();
+  count.innerText = `${referenceableCards.length} cards available`;
+
+  const header = document.createElement("div");
+  header.classList.add("reference-card-row", "reference-card-row-header");
+  header.innerHTML = "<span></span><span>NUM</span><span>text</span>";
+  list.appendChild(header);
+
+  const textField = cardFields.find((field) => field.type === "text");
+  for (let i = 0; i < referenceableCards.length; i++) {
+    const card = referenceableCards[i];
+    const row = document.createElement("label");
+    row.classList.add("reference-card-row");
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = card.sourceRefId;
+    checkbox.addEventListener("change", updateReferenceSelectionCount);
+    row.appendChild(checkbox);
+
+    const num = document.createElement("span");
+    num.innerText = String(i + 1).padStart(2, "0");
+    row.appendChild(num);
+
+    const text = document.createElement("span");
+    text.classList.add("reference-card-preview");
+    text.innerText = textField ? String(card[textField.name] ?? "") : card.cardId;
+    row.appendChild(text);
+
+    list.appendChild(row);
+  }
+
+  updateReferenceSelectionCount();
+}
+
+function updateReferenceSelectionCount() {
+  const selected = document.querySelectorAll("#reference-card-list input[type='checkbox']:checked").length;
+  const count = document.getElementById("reference-selection-count");
+  if (count) {
+    count.innerText = `${selected} cards selected`;
+  }
+}
+
+function confirmReferenceCards() {
+  const select = document.getElementById("reference-deck-source") as HTMLSelectElement | null;
+  if (!select?.value) {
+    return;
+  }
+
+  const refIds = Array.from(document.querySelectorAll("#reference-card-list input[type='checkbox']:checked"))
+    .map((input) => (input as HTMLInputElement).value);
+  if (refIds.length === 0) {
+    closeReferenceCardsDialog();
+    return;
+  }
+
+  sendMessage({ type: 'reference-cards-from-deck', data: { sourcePageId: select.value, refIds } });
+  closeReferenceCardsDialog();
 }
 
 

@@ -45,6 +45,8 @@ export interface SharedCardLibrary {
 export interface DeckCardRef {
     refId: string;
     cardId: string;
+    sourcePageId?: string;
+    sourceRefId?: string;
     fieldExtensions: CardFieldExtension[];
 }
 
@@ -58,6 +60,10 @@ export interface DeckManifest {
 export interface ResolvedCardData extends Record<string, any> {
     __cardId: string;
     __cardRefId: string;
+    __isReferenced?: boolean;
+    __sourcePageId?: string;
+    __sourcePageName?: string;
+    __sourceRefId?: string;
 }
 
 export interface FieldExtensionCollision {

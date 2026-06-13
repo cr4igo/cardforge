@@ -11,8 +11,9 @@ import {
     computeTemplateSignature,
     createEmptyManifest,
     detectFieldExtensionCollisions,
-    appendRefsToDeck,
+    appendSelectedRefsToDeck,
     findMissingCardRefs,
+    listReferenceableCards,
     migrateLegacyCardsData,
     mergeMigratedDeckState,
     parseLibrary,
@@ -154,7 +155,8 @@ function sendCardSaveError(message: string, data: any) {
 }
 
 function sendCardsData(library: SharedCardLibrary, manifest: DeckManifest) {
-    const cardsData = resolveDeckCards(library, manifest);
+    const pageNames = new Map((penpot.currentFile?.pages ?? []).map((page) => [page.id, page.name]));
+    const cardsData = resolveDeckCards(library, manifest, pageNames);
     console.log("loaded cards data:", cardsData);
     penpot.ui.sendMessage({ "type": "CARDS_DATA", "data": JSON.stringify(cardsData) });
 }
@@ -245,7 +247,13 @@ function importDeckRefs(sourcePageId: string) {
     const cardFields = getCurrentCardFields();
     const { library, manifest } = loadDeckState(cardFields);
     const sourceManifest = readDeckManifest(sourcePage);
-    const nextManifest = appendRefsToDeck(manifest, sourceManifest.cardRefs, () => createId("ref"));
+    const nextManifest = appendSelectedRefsToDeck(
+        manifest,
+        sourceManifest,
+        sourceManifest.cardRefs.map((ref) => ref.refId),
+        sourcePage.id,
+        () => createId("ref"),
+    );
     nextManifest.templateSignature = computeTemplateSignature(cardFields);
 
     const collisions = detectFieldExtensionCollisions(library, nextManifest);
@@ -257,6 +265,61 @@ function importDeckRefs(sourcePageId: string) {
     writeDeckState(library, nextManifest);
     sendCardsData(library, nextManifest);
     sendDeckSources();
+}
+
+function sendReferenceableCards(sourcePageId: string) {
+    const sourcePage = penpot.currentFile?.pages.find((page) => page.id === sourcePageId);
+    if (!sourcePage) {
+        sendCardSaveError("Deck source page not found.", { sourcePageId });
+        return;
+    }
+
+    const cardFields = getCurrentCardFields();
+    const { library, manifest } = loadDeckState(cardFields);
+    const sourceManifest = readDeckManifest(sourcePage);
+    const cards = listReferenceableCards(library, sourceManifest, manifest, sourcePage.id, sourcePage.name);
+    penpot.ui.sendMessage({
+        "type": "REFERENCEABLE_CARDS",
+        "data": { sourcePageId: sourcePage.id, sourcePageName: sourcePage.name, cards },
+    });
+}
+
+function referenceCardsFromDeck(sourcePageId: string, refIds: string[]) {
+    const sourcePage = penpot.currentFile?.pages.find((page) => page.id === sourcePageId);
+    if (!sourcePage) {
+        sendCardSaveError("Deck source page not found.", { sourcePageId });
+        return;
+    }
+
+    const cardFields = getCurrentCardFields();
+    const { library, manifest } = loadDeckState(cardFields);
+    const sourceManifest = readDeckManifest(sourcePage);
+    const nextManifest = appendSelectedRefsToDeck(manifest, sourceManifest, refIds, sourcePage.id, () => createId("ref"));
+    nextManifest.templateSignature = computeTemplateSignature(cardFields);
+
+    const collisions = detectFieldExtensionCollisions(library, nextManifest);
+    if (collisions.length > 0) {
+        sendCardSaveError("Referenced cards have field extension collisions.", { collisions });
+        return;
+    }
+
+    writeDeckState(library, nextManifest);
+    sendCardsData(library, nextManifest);
+    sendReferenceableCards(sourcePage.id);
+    sendDeckSources();
+}
+
+function jumpToCardSource(sourcePageId: string, sourceRefId: string, cardId: string) {
+    const sourcePage = penpot.currentFile?.pages.find((page) => page.id === sourcePageId);
+    if (!sourcePage) {
+        sendCardSaveError("Deck source page not found.", { sourcePageId });
+        return;
+    }
+
+    penpot.openPage(sourcePage);
+    loadCardFields();
+    loadCardsData();
+    penpot.ui.sendMessage({ "type": "SOURCE_JUMPED", "data": { cardId, refId: sourceRefId } });
 }
 
 
@@ -825,6 +888,17 @@ penpot.ui.onMessage((message: PluginUIEvent) => {
         loadCardsData();
     } else if (message.type === "load-card-fields") {
         loadCardFields();
+    } else if (message.type === "load-referenceable-cards") {
+        sendReferenceableCards(String(message.data?.sourcePageId ?? ""));
+    } else if (message.type === "reference-cards-from-deck") {
+        const refIds = Array.isArray(message.data?.refIds) ? message.data.refIds.map(String) : [];
+        referenceCardsFromDeck(String(message.data?.sourcePageId ?? ""), refIds);
+    } else if (message.type === "jump-to-card-source") {
+        jumpToCardSource(
+            String(message.data?.sourcePageId ?? ""),
+            String(message.data?.sourceRefId ?? ""),
+            String(message.data?.cardId ?? ""),
+        );
     } else if (message.type === "import-deck-refs") {
         importDeckRefs(String(message.data?.sourcePageId ?? ""));
     } else if (message.type === "create-image-data") {
