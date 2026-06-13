@@ -4,7 +4,23 @@ import { parseFieldName } from './fieldMetadata';
 import { collectCardFields, findByFieldName, applyCardDataToTree } from './cardFields';
 import { fitTextToBoxWithDetails, type FittableText } from './textFit';
 import { fitLongWordsToBox, type MeasureWordWidth, type WordFittableText } from './wordFit';
-import type { PluginUIEvent, DeckEvent, ForgeWarning } from './model';
+import {
+    CARDS_LIBRARY_KEY,
+    DECK_MANIFEST_KEY,
+    LEGACY_CARDS_DATA_KEY,
+    computeTemplateSignature,
+    createEmptyManifest,
+    detectFieldExtensionCollisions,
+    appendRefsToDeck,
+    findMissingCardRefs,
+    migrateLegacyCardsData,
+    mergeMigratedDeckState,
+    parseLibrary,
+    parseManifest,
+    resolveDeckCards,
+    syncDeckFromResolvedCards,
+} from './sharedCards';
+import type { PluginUIEvent, DeckEvent, ForgeWarning, CardField, DeckManifest, SharedCardLibrary } from './model';
 
 
 export const cardSizes = [
@@ -34,23 +50,213 @@ penpot.ui.open("CardForge", "", {
 });
 
 
-function loadCardsData() {
-    let data = penpot.currentPage?.getPluginData("cardsData");
-    console.log("loaded cards data:", data);
-    if (data) {
-        penpot.ui.sendMessage({ "type": "CARDS_DATA", "data": JSON.parse(data) });
+function isRecord(value: unknown): value is Record<string, any> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nowIso() {
+    return new Date().toISOString();
+}
+
+function createId(prefix: string) {
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function currentDeckId() {
+    return penpot.currentPage ? `deck_${penpot.currentPage.id}` : "deck_unknown";
+}
+
+function getCurrentCardFields(): CardField[] {
+    const root = penpot.currentPage?.getShapeById("00000000-0000-0000-0000-000000000000") as Board | null | undefined;
+    if (!root) {
+        return [];
     }
+
+    const frontBoard = findByName(root, "Front") as Board | undefined;
+    const backBoard = findByName(root, "Back") as Board | undefined;
+    return collectCardFields([frontBoard, backBoard].filter(Boolean) as Board[]);
+}
+
+function readSharedLibrary() {
+    return parseLibrary(penpot.currentFile?.getPluginData(CARDS_LIBRARY_KEY));
+}
+
+function readDeckManifest(page = penpot.currentPage): DeckManifest {
+    return parseManifest(page?.getPluginData(DECK_MANIFEST_KEY), page ? `deck_${page.id}` : currentDeckId());
+}
+
+function writeDeckState(library: SharedCardLibrary, manifest: DeckManifest) {
+    penpot.currentFile?.setPluginData(CARDS_LIBRARY_KEY, JSON.stringify(library));
+    penpot.currentPage?.setPluginData(DECK_MANIFEST_KEY, JSON.stringify(manifest));
+}
+
+function readOtherManifests(): DeckManifest[] {
+    const currentPageId = penpot.currentPage?.id;
+    return penpot.currentFile?.pages
+        .filter((page) => page.id !== currentPageId)
+        .map((page) => readDeckManifest(page))
+        .filter((manifest) => manifest.cardRefs.length > 0) ?? [];
+}
+
+function loadDeckState(cardFields: CardField[]): { library: SharedCardLibrary; manifest: DeckManifest } {
+    let library = readSharedLibrary();
+    let manifest = readDeckManifest();
+    const signature = computeTemplateSignature(cardFields);
+    let shouldWrite = !penpot.currentPage?.getPluginData(DECK_MANIFEST_KEY);
+    const legacyCardsData = penpot.currentPage?.getPluginData(LEGACY_CARDS_DATA_KEY);
+
+    if (manifest.cardRefs.length === 0 && legacyCardsData) {
+        let legacyId = 0;
+        const migrated = migrateLegacyCardsData(
+            legacyCardsData,
+            nowIso(),
+            () => `legacy_${penpot.currentPage?.id ?? "page"}_${legacyId++}`,
+        );
+        const merged = mergeMigratedDeckState(library, migrated.library, {
+            ...migrated.manifest,
+            deckId: currentDeckId(),
+            templateSignature: signature,
+        }, () => createId("legacy"));
+        library = merged.library;
+        manifest = merged.manifest;
+        shouldWrite = true;
+    } else if (!manifest.templateSignature) {
+        manifest = { ...manifest, templateSignature: signature };
+        shouldWrite = true;
+    }
+
+    if (shouldWrite) {
+        writeDeckState(library, manifest);
+    }
+
+    return { library, manifest };
+}
+
+function parseCardsPayload(payload: unknown): Record<string, any>[] {
+    let value = payload;
+    try {
+        for (let i = 0; i < 2 && typeof value === "string"; i++) {
+            value = JSON.parse(value);
+        }
+    } catch {
+        return [];
+    }
+
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value.filter(isRecord);
+}
+
+function sendCardSaveError(message: string, data: any) {
+    penpot.ui.sendMessage({ "type": "CARD_SAVE_ERROR", "data": { message, ...data } });
+}
+
+function sendCardsData(library: SharedCardLibrary, manifest: DeckManifest) {
+    const cardsData = resolveDeckCards(library, manifest);
+    console.log("loaded cards data:", cardsData);
+    penpot.ui.sendMessage({ "type": "CARDS_DATA", "data": JSON.stringify(cardsData) });
+}
+
+function sendTemplateWarningIfNeeded(manifest: DeckManifest, cardFields: CardField[]) {
+    const signature = computeTemplateSignature(cardFields);
+    if (manifest.templateSignature && signature && manifest.templateSignature !== signature) {
+        penpot.ui.sendMessage({
+            "type": "DECK_WARNING",
+            "data": { message: "Deck template changed. Review the cards before forging." },
+        });
+    } else {
+        penpot.ui.sendMessage({ "type": "DECK_WARNING", "data": { message: "" } });
+    }
+}
+
+function sendMissingCardWarningIfNeeded(library: SharedCardLibrary, manifest: DeckManifest) {
+    const missing = findMissingCardRefs(library, manifest);
+    if (missing.length > 0) {
+        penpot.ui.sendMessage({
+            "type": "DECK_WARNING",
+            "data": { message: `${missing.length} deck card reference could not be found in the shared library.` },
+        });
+    }
+}
+
+function sendDeckSources() {
+    const currentPageId = penpot.currentPage?.id;
+    const sources = penpot.currentFile?.pages
+        .filter((page) => page.id !== currentPageId)
+        .map((page) => {
+            const manifest = readDeckManifest(page);
+            return { pageId: page.id, name: page.name, cardCount: manifest.cardRefs.length };
+        })
+        .filter((source) => source.cardCount > 0) ?? [];
+
+    penpot.ui.sendMessage({ "type": "DECK_SOURCES", "data": sources });
+}
+
+function persistCardsData(payload: unknown): { library: SharedCardLibrary; manifest: DeckManifest } | null {
+    const cardFields = getCurrentCardFields();
+    const { library, manifest } = loadDeckState(cardFields);
+    const synced = syncDeckFromResolvedCards(
+        library,
+        manifest,
+        parseCardsPayload(payload),
+        cardFields,
+        nowIso(),
+        () => createId("id"),
+        readOtherManifests(),
+    );
+    synced.manifest.templateSignature = computeTemplateSignature(cardFields);
+
+    const collisions = detectFieldExtensionCollisions(synced.library, synced.manifest);
+    if (collisions.length > 0) {
+        sendCardSaveError("Field extension collides with shared card field.", { collisions });
+        return null;
+    }
+
+    writeDeckState(synced.library, synced.manifest);
+    return synced;
+}
+
+function loadCardsData() {
+    const cardFields = getCurrentCardFields();
+    const { library, manifest } = loadDeckState(cardFields);
+    sendTemplateWarningIfNeeded(manifest, cardFields);
+    sendMissingCardWarningIfNeeded(library, manifest);
+    sendCardsData(library, manifest);
 }
 
 
 function loadCardFields() {
-    const root: Board = (penpot.currentPage?.getShapeById("00000000-0000-0000-0000-000000000000") as Board);
-    const frontBoard = findByName(root, "Front") as Board | undefined;
-    const backBoard = findByName(root, "Back") as Board | undefined;
-    const fields = collectCardFields([frontBoard, backBoard].filter(Boolean) as Board[]);
+    const fields = getCurrentCardFields();
 
     const assetsUrl = "https://design.penpot.app/assets/by-file-media-id/";
     penpot.ui.sendMessage({ "type": "CARD_FIELDS", "data": { fields: fields, assetsUrl: assetsUrl } });
+    sendDeckSources();
+}
+
+function importDeckRefs(sourcePageId: string) {
+    const sourcePage = penpot.currentFile?.pages.find((page) => page.id === sourcePageId);
+    if (!sourcePage) {
+        sendCardSaveError("Deck source page not found.", { sourcePageId });
+        return;
+    }
+
+    const cardFields = getCurrentCardFields();
+    const { library, manifest } = loadDeckState(cardFields);
+    const sourceManifest = readDeckManifest(sourcePage);
+    const nextManifest = appendRefsToDeck(manifest, sourceManifest.cardRefs, () => createId("ref"));
+    nextManifest.templateSignature = computeTemplateSignature(cardFields);
+
+    const collisions = detectFieldExtensionCollisions(library, nextManifest);
+    if (collisions.length > 0) {
+        sendCardSaveError("Imported deck has field extension collisions.", { collisions });
+        return;
+    }
+
+    writeDeckState(library, nextManifest);
+    sendCardsData(library, nextManifest);
+    sendDeckSources();
 }
 
 
@@ -187,6 +393,7 @@ function createDeck(message: DeckEvent) {
         back.name = "Back";
         back.x += front.width + 100;
 
+        writeDeckState(readSharedLibrary(), createEmptyManifest(currentDeckId()));
         penpot.closePlugin();
     }
 }
@@ -613,11 +820,13 @@ penpot.ui.onMessage((message: PluginUIEvent) => {
     if (message.type === "create-deck") {
         handleCreateDeck((message as DeckEvent));
     } else if (message.type === "save-cards-data") {
-        penpot.currentPage?.setPluginData("cardsData", JSON.stringify(message.data));
+        persistCardsData(message.data);
     } else if (message.type === "load-cards-data") {
         loadCardsData();
     } else if (message.type === "load-card-fields") {
         loadCardFields();
+    } else if (message.type === "import-deck-refs") {
+        importDeckRefs(String(message.data?.sourcePageId ?? ""));
     } else if (message.type === "create-image-data") {
         const { data, mimeType, num, name } = message.data as {
             data: Uint8Array;
@@ -627,7 +836,11 @@ penpot.ui.onMessage((message: PluginUIEvent) => {
         };
         createImage(data, mimeType, num, name);
     } else if (message.type === "forge-cards") {
-        forgeCards(message.data.cardsData, message.data.type, (message.data.cutMarks == "true"));
+        const synced = persistCardsData(message.data.cardsData);
+        if (synced) {
+            sendMissingCardWarningIfNeeded(synced.library, synced.manifest);
+            forgeCards(resolveDeckCards(synced.library, synced.manifest), message.data.type, (message.data.cutMarks == "true"));
+        }
     } else if (message.type === "is-page-empty") {
         handleIsPageEmpty();
     }

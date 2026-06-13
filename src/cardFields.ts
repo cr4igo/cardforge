@@ -28,7 +28,7 @@ export function isValidVariableField(shape: FieldNodeLike) {
     );
 }
 
-function walkFields(board: FieldNodeLike, fields: CardField[], seenNames: Set<string>) {
+function walkFields(board: FieldNodeLike, fields: CardField[], seenNames: Set<string>, side?: string) {
     if (!board.children?.length) {
         return;
     }
@@ -38,12 +38,12 @@ function walkFields(board: FieldNodeLike, fields: CardField[], seenNames: Set<st
             const metadata = parseFieldName(child.name as string);
             if (!seenNames.has(metadata.name)) {
                 seenNames.add(metadata.name);
-                fields.push({ ...metadata, type: child.type === "text" ? "text" : "image", id: child.id as string });
+                fields.push({ ...metadata, type: child.type === "text" ? "text" : "image", id: child.id as string, side });
             }
         }
 
         if (child.children?.length) {
-            walkFields(child, fields, seenNames);
+            walkFields(child, fields, seenNames, side);
         }
     }
 }
@@ -53,7 +53,7 @@ export function collectCardFields(boards: FieldNodeLike[]) {
     const seenNames = new Set<string>();
 
     for (const board of boards) {
-        walkFields(board, fields, seenNames);
+        walkFields(board, fields, seenNames, board.name);
     }
 
     return fields;

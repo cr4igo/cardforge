@@ -18,6 +18,12 @@ function listenerFunction(this: HTMLElement, ev: Event) {
 
 let assetsUrl = "";
 
+interface DeckSource {
+  pageId: string;
+  name: string;
+  cardCount: number;
+}
+
 function sendMessage(message: PluginUIEvent) {
   parent.postMessage(message, '*');
 }
@@ -35,10 +41,16 @@ function initMessageListener() {
       assetsUrl = event.data.data.assetsUrl;
       cardFields = event.data.data.fields;
       loadCardFields();
+    } else if (event.data.type == "DECK_SOURCES") {
+      loadDeckSources(event.data.data);
+    } else if (event.data.type == "DECK_WARNING") {
+      showDeckWarning(event.data.data?.message ?? "");
     } else if (event.data.type == "IMAGE_CREATED") {
       updateImageInfo(event.data.data.num, event.data.data.name, event.data.data.id, event.data.data.imageId);
     } else if (event.data.type == "FORGE_WARNINGS") {
       showForgeWarnings(event.data.data);
+    } else if (event.data.type == "CARD_SAVE_ERROR") {
+      showCardSaveError(event.data.data?.message ?? "Card data could not be saved.");
     } else if (event.data.type == "PAGE_EMPTY") {
       if (event.data.data) {
         changeTab("create");
@@ -160,9 +172,9 @@ function updateImageInfo(num: number, name: string, id: string, imageId: string)
   saveCardsData();
 }
 
-function loadCardsData(data: string) {
+function loadCardsData(data: string | any[]) {
   if (data) {
-    cardsData = JSON.parse(data);
+    cardsData = typeof data === "string" ? JSON.parse(data) : data;
     reloadCardEntries();
   }
 }
@@ -253,10 +265,30 @@ function deleteCard(num: number) {
 
 function copyCard(num: number) {
   let card = structuredClone(cardsData[num - 1]);
+  if (typeof cardsData[num - 1].__cardId === "string") {
+    card.__forkedFromCardId = cardsData[num - 1].__cardId;
+  }
+  delete card.__cardId;
+  delete card.__cardRefId;
   cardsData.splice(num - 1, 0, card);
   saveCardsData();
 
   reloadCardEntries();
+}
+
+function showCardSaveError(message: string) {
+  console.error("[CardForge save]", message);
+  window.alert(message);
+}
+
+function showDeckWarning(message: string) {
+  const warning = document.getElementById("deck-warning");
+  if (!warning) {
+    return;
+  }
+
+  warning.innerText = message;
+  warning.classList.toggle("hidden", !message);
 }
 
 function saveCardText(num: number, name: string, val: string) {
@@ -443,12 +475,40 @@ function changeCutMarks() {
 function initCards() {
   sendMessage({ type: 'load-card-fields', data: "" });
   document.getElementById("add-card")?.addEventListener("click", () => { addEmptyCard() });
+  document.getElementById("import-deck-button")?.addEventListener("click", () => { importDeckRefs() });
   document.getElementById("forge-cards")?.addEventListener("click", () => { showForgeCards(true) });
 
   document.getElementById("box-forge-cancel")?.addEventListener("click", () => { showForgeCards(false) });
   document.getElementById("box-forge-ok")?.addEventListener("click", () => { forgeCards() });
   document.getElementById("forge-type")?.addEventListener("change", () => { changeForgeType() });
   document.getElementById("forge-cut-marks")?.addEventListener("change", () => { changeCutMarks() });
+}
+
+function loadDeckSources(sources: DeckSource[]) {
+  const importBox = document.getElementById("import-deck");
+  const select = document.getElementById("import-deck-source") as HTMLSelectElement | null;
+  if (!importBox || !select) {
+    return;
+  }
+
+  select.replaceChildren();
+  for (const source of sources) {
+    const option = document.createElement("option");
+    option.value = source.pageId;
+    option.innerText = `${source.name} (${source.cardCount})`;
+    select.appendChild(option);
+  }
+
+  importBox.classList.toggle("hidden", sources.length === 0);
+}
+
+function importDeckRefs() {
+  const select = document.getElementById("import-deck-source") as HTMLSelectElement | null;
+  if (!select?.value) {
+    return;
+  }
+
+  sendMessage({ type: 'import-deck-refs', data: { sourcePageId: select.value } });
 }
 
 
