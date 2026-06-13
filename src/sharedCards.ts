@@ -195,6 +195,8 @@ export function parseManifest(serialized: string | null | undefined, deckId = "d
                 cardRefs.push({
                     refId: typeof rawRef.refId === "string" ? rawRef.refId : `ref_${i + 1}`,
                     cardId: rawRef.cardId,
+                    sourcePageId: typeof rawRef.sourcePageId === "string" ? rawRef.sourcePageId : undefined,
+                    sourceRefId: typeof rawRef.sourceRefId === "string" ? rawRef.sourceRefId : undefined,
                     fieldExtensions,
                 });
             }
@@ -307,7 +309,11 @@ export function mergeMigratedDeckState(
     return { library, manifest };
 }
 
-export function resolveDeckCards(library: SharedCardLibrary, manifest: DeckManifest): ResolvedCardData[] {
+export function resolveDeckCards(
+    library: SharedCardLibrary,
+    manifest: DeckManifest,
+    pageNamesById: Map<string, string> = new Map(),
+): ResolvedCardData[] {
     const resolved: ResolvedCardData[] = [];
 
     for (const ref of manifest.cardRefs) {
@@ -321,6 +327,15 @@ export function resolveDeckCards(library: SharedCardLibrary, manifest: DeckManif
             [CARD_ID_FIELD]: card.id,
             [CARD_REF_ID_FIELD]: ref.refId,
         } as ResolvedCardData;
+
+        if (ref.sourcePageId) {
+            data.__isReferenced = true;
+            data.__sourcePageId = ref.sourcePageId;
+            data.__sourcePageName = pageNamesById.get(ref.sourcePageId) ?? "";
+            data.__sourceRefId = ref.sourceRefId;
+        } else {
+            data.__isReferenced = false;
+        }
 
         for (const extension of ref.fieldExtensions) {
             if (!Object.prototype.hasOwnProperty.call(card.fields, extension.name)) {
@@ -403,6 +418,68 @@ export function appendRefsToDeck(
     }
 
     return nextManifest;
+}
+
+export function appendSelectedRefsToDeck(
+    targetManifest: DeckManifest,
+    sourceManifest: DeckManifest,
+    selectedSourceRefIds: string[],
+    sourcePageId: string,
+    refIdFactory: IdFactory,
+): DeckManifest {
+    const nextManifest = cloneManifest(targetManifest);
+    const selected = new Set(selectedSourceRefIds);
+    const existingCardIds = new Set(nextManifest.cardRefs.map((ref) => ref.cardId));
+    const usedRefIds = new Set(nextManifest.cardRefs.map((ref) => ref.refId));
+
+    for (const sourceRef of sourceManifest.cardRefs) {
+        if (!selected.has(sourceRef.refId) || existingCardIds.has(sourceRef.cardId)) {
+            continue;
+        }
+
+        nextManifest.cardRefs.push({
+            refId: nextUniqueId(refIdFactory, usedRefIds, "ref"),
+            cardId: sourceRef.cardId,
+            sourcePageId,
+            sourceRefId: sourceRef.refId,
+            fieldExtensions: sourceRef.fieldExtensions.map((field) => ({ ...field })),
+        });
+        existingCardIds.add(sourceRef.cardId);
+    }
+
+    return nextManifest;
+}
+
+export function listReferenceableCards(
+    library: SharedCardLibrary,
+    sourceManifest: DeckManifest,
+    targetManifest: DeckManifest,
+    sourcePageId: string,
+    sourcePageName: string,
+): (ResolvedCardData & { cardId: string; sourceRefId: string; sourcePageId: string; sourcePageName: string })[] {
+    const targetCardIds = new Set(targetManifest.cardRefs.map((ref) => ref.cardId));
+    return sourceManifest.cardRefs
+        .filter((ref) => !targetCardIds.has(ref.cardId))
+        .map((ref) => {
+            const card = library.cardsById[ref.cardId];
+            if (!card) {
+                return null;
+            }
+
+            const resolved = resolveDeckCards(
+                library,
+                { ...sourceManifest, cardRefs: [{ ...ref, sourcePageId, sourceRefId: ref.refId }] },
+                new Map([[sourcePageId, sourcePageName]]),
+            )[0];
+            return {
+                ...resolved,
+                cardId: ref.cardId,
+                sourceRefId: ref.refId,
+                sourcePageId,
+                sourcePageName,
+            };
+        })
+        .filter((card): card is ResolvedCardData & { cardId: string; sourceRefId: string; sourcePageId: string; sourcePageName: string } => Boolean(card));
 }
 
 export function forkCardForRef(

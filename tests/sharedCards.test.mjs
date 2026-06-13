@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   appendCardToDeck,
   appendRefsToDeck,
+  appendSelectedRefsToDeck,
   computeTemplateSignature,
   createEmptyLibrary,
   createEmptyManifest,
@@ -9,6 +10,7 @@ import {
   detectFieldExtensionCollisions,
   findMissingCardRefs,
   forkCardForRef,
+  listReferenceableCards,
   migrateLegacyCardsData,
   mergeMigratedDeckState,
   parseLibrary,
@@ -180,5 +182,42 @@ const importedWithLocalField = syncDeckFromResolvedCards(
 );
 assert.equal(importedWithLocalField.library.cardsById.import_id.fields["#deckOnly"], undefined);
 assert.deepEqual(importedWithLocalField.manifest.cardRefs[1].fieldExtensions.map((field) => [field.name, field.value]), [["#deckOnly", "New local"]]);
+
+const sourceManifest = createEmptyManifest("deck_source");
+sourceManifest.cardRefs.push(
+  { refId: "source_ref_1", cardId: "card_1", fieldExtensions: [] },
+  { refId: "source_ref_2", cardId: "card_2", fieldExtensions: [{ id: "source_ext", name: "#deckOnly", type: "text", value: "Source local" }] },
+);
+library.cardsById.card_2 = {
+  id: "card_2",
+  name: "Second",
+  fields: { "#title": "Second", "#art": "" },
+  forkedFromCardId: null,
+  createdAt: "2026-06-13T17:00:00.000Z",
+  updatedAt: "2026-06-13T17:00:00.000Z",
+};
+
+const referenceable = listReferenceableCards(library, sourceManifest, manifest, "page_source", "Source Deck");
+assert.deepEqual(referenceable.map((card) => [card.sourceRefId, card.cardId, card.sourcePageName, card["#title"], card["#deckOnly"]]), [
+  ["source_ref_2", "card_2", "Source Deck", "Second", "Source local"],
+]);
+
+const referenced = appendSelectedRefsToDeck(
+  manifest,
+  sourceManifest,
+  ["source_ref_1", "source_ref_2"],
+  "page_source",
+  () => "target_ref_2",
+);
+assert.equal(referenced.cardRefs.length, manifest.cardRefs.length + 1);
+assert.equal(referenced.cardRefs[1].cardId, "card_2");
+assert.equal(referenced.cardRefs[1].sourcePageId, "page_source");
+assert.equal(referenced.cardRefs[1].sourceRefId, "source_ref_2");
+
+const resolvedReference = resolveDeckCards(library, referenced, new Map([["page_source", "Source Deck"]]))[1];
+assert.equal(resolvedReference.__isReferenced, true);
+assert.equal(resolvedReference.__sourcePageId, "page_source");
+assert.equal(resolvedReference.__sourcePageName, "Source Deck");
+assert.equal(resolvedReference.__sourceRefId, "source_ref_2");
 
 console.log("shared cards tests passed");

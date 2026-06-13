@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@200..700&display=swap" rel="stylesheet">
   <title>CardForge</title>
   <script type="module" crossorigin src="/index.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-hRv_crWY.css">
+  <link rel="stylesheet" crossorigin href="/assets/index-BwgfvT44.css">
 </head>
 
 <body>
@@ -102,6 +102,7 @@
       <div id="cards-container">
         <div id="deck-warning" class="deck-warning hidden"></div>
         <div id="cards-header" class="cards-header">
+          <div class="card-source">&#8599;</div>
           <div class="card-num">NUM</div>
           <div id="cards-header-actions" class="card-num"></div>
         </div>
@@ -110,13 +111,32 @@
         <div id="forge-entry" class="forge-entry">
           <div id="add-card" class="btn-add">
             <div class="btn-add-img"></div>
-            ADD CARD
+            CREATE CARD IN THIS DECK
           </div>
           <div id="import-deck" class="deck-import hidden">
             <select id="import-deck-source"></select>
-            <button id="import-deck-button" class="btn-primary btn-line">IMPORT DECK</button>
+            <button id="import-deck-button" class="btn-primary btn-line">REFERENCE CARD(S) FROM OTHER DECK</button>
           </div>
           <button id="forge-cards" class="btn-primary">FORGE CARDS</button>
+        </div>
+      </div>
+      <div id="box-reference-cards" class="reference-modal hidden">
+        <div class="reference-dialog">
+          <div class="reference-dialog-header">
+            <h3>REFERENCE CARD(S) FROM OTHER DECK</h3>
+            <button id="reference-cards-close" class="reference-close">x</button>
+          </div>
+          <div class="reference-controls">
+            <label>Source deck</label>
+            <select id="reference-deck-source"></select>
+            <span id="reference-card-count"></span>
+          </div>
+          <div id="reference-card-list" class="reference-card-list"></div>
+          <div class="reference-dialog-footer">
+            <span id="reference-selection-count">0 cards selected</span>
+            <button id="reference-cards-cancel" class="btn-primary btn-line">Cancel</button>
+            <button id="reference-cards-confirm" class="btn-primary">Add references</button>
+          </div>
         </div>
       </div>
       <div id="box-forge" class="box box-small hidden">
