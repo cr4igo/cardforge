@@ -1,9 +1,10 @@
 
 import type { Shape, Board, Text } from '@penpot/plugin-types';
 import { parseFieldName } from './fieldMetadata';
+import { collectCardFields, findByFieldName, applyCardDataToTree } from './cardFields';
 import { fitTextToBoxWithDetails, type FittableText } from './textFit';
 import { fitLongWordsToBox, type MeasureWordWidth, type WordFittableText } from './wordFit';
-import type { PluginUIEvent, DeckEvent, CardField, ForgeWarning } from './model';
+import type { PluginUIEvent, DeckEvent, ForgeWarning } from './model';
 
 
 export const cardSizes = [
@@ -42,35 +43,11 @@ function loadCardsData() {
 }
 
 
-function isValidField(shape: Shape) {
-    return (shape.name?.startsWith("#") &&
-        ((shape.type == "text") ||
-            ((shape.type == "rectangle") &&
-                (shape.fills?.length) == 1 &&
-                (shape["fills"][0]["fillImage"]))));
-}
-
-
-function findFields(board: Board, fields: CardField[]) {
-    for (let i = 0; i < board.children.length; i++) {
-        let child = board.children[i];
-        if (isValidField(child)) {
-            let type = (child["type"] == "text") ? "text" : "image";
-            fields.push({ ...parseFieldName(child["name"]), "type": type, "id": child.id });
-        }
-        if (child.hasOwnProperty("children")) {
-            findFields((child as Board), fields);
-        }
-    }
-    return fields;
-}
-
-
 function loadCardFields() {
     const root: Board = (penpot.currentPage?.getShapeById("00000000-0000-0000-0000-000000000000") as Board);
-    const card = (findByName(root, "Front") as Board);
-
-    const fields = findFields(card, [])
+    const frontBoard = findByName(root, "Front") as Board | undefined;
+    const backBoard = findByName(root, "Back") as Board | undefined;
+    const fields = collectCardFields([frontBoard, backBoard].filter(Boolean) as Board[]);
 
     const assetsUrl = "https://design.penpot.app/assets/by-file-media-id/";
     penpot.ui.sendMessage({ "type": "CARD_FIELDS", "data": { fields: fields, assetsUrl: assetsUrl } });
@@ -85,21 +62,6 @@ function findByName(parent: Board, name: string): Shape | undefined {
             return child;
         } if ((child as Board).children?.length > 0) {
             let inner = findByName((child as Board), name);
-            if (inner) {
-                return inner;
-            }
-        }
-    }
-    return undefined;
-}
-
-function findByFieldName(parent: Board, fieldName: string): Shape | undefined {
-    for (let i = 0; i < parent.children.length; i++) {
-        let child = parent.children[i];
-        if ((child.hasOwnProperty("name")) && (parseFieldName(child["name"]).name === fieldName)) {
-            return child;
-        } if ((child as Board).children?.length > 0) {
-            let inner = findByFieldName((child as Board), fieldName);
             if (inner) {
                 return inner;
             }
@@ -268,23 +230,20 @@ function cloneCard(card: Shape, cardData: Record<string, any>, cardNum: string):
     const card2 = card.clone() as Board;
     card2.name = "card" + cardNum.padStart(2, '0');
 
-    for (const prop in cardData) {
-        if (Object.prototype.hasOwnProperty.call(cardData, prop)) {
-            const field = findByFieldName(card2, prop);
-            if (field) {
-                if (field.type === "text") {
-                    const textField = field as Text;
-                    textField.characters = cardData[prop];
-                } else {
-                    const imageId = cardData[prop].split("|")[0];
-                    const image = penpot.currentPage?.getShapeById(imageId);
-                    if (image) {
-                        field.fills = image.fills;
-                    }
-                }
+    applyCardDataToTree(card2, cardData, {
+        assignTextField(field, value) {
+            const textField = field as unknown as Text;
+            textField.characters = value;
+        },
+        assignImageField(field, value) {
+            const imageId = value.split("|")[0];
+            const image = penpot.currentPage?.getShapeById(imageId);
+            if (image) {
+                const imageShape = field as unknown as Shape;
+                imageShape.fills = image.fills as any;
             }
-        }
-    }
+        },
+    });
 
     return card2;
 }
@@ -389,6 +348,37 @@ function addCard(output: Board, card: Board, x: number, y: number) {
         y += card.height;
     }
     return [x, y];
+}
+
+function createCardPairSheet(frontCard: Board, backCard: Board, backOnTop: boolean, cutMarks: boolean) {
+    let sheet = penpot.createBoard();
+    sheet.name = frontCard.name;
+    sheet.resize(frontCard.width, frontCard.height * 2);
+
+    if (backOnTop) {
+        backCard.rotate(180);
+        sheet.appendChild(backCard);
+        backCard.x = 0;
+        backCard.y = 0;
+
+        sheet.appendChild(frontCard);
+        frontCard.x = 0;
+        frontCard.y = frontCard.height;
+    } else {
+        sheet.appendChild(frontCard);
+        frontCard.x = 0;
+        frontCard.y = 0;
+
+        sheet.appendChild(backCard);
+        backCard.x = 0;
+        backCard.y = frontCard.height;
+    }
+
+    if (cutMarks) {
+        sheet = addCutMarks(sheet, false);
+    }
+
+    return sheet;
 }
 
 
@@ -497,35 +487,39 @@ function forgeCards(cardsData: Record<string, any>[], type: string, cutMarks: bo
             baseBack = tmpBack;
         }
 
-        output.resize(baseFront.width * (cardsData.length + 1), baseFront.height);
+        output.resize(baseFront.width * Math.max(cardsData.length, 1), baseFront.height * 2);
     } else if (type == "tabletop") {
-        output.resize(baseFront.width * 10, baseFront.height * 7);
+        output.resize(baseFront.width * 10, baseFront.height * 14);
     }
 
     if ((type == "tabletop") || (type == "standard")) {
         for (let i = 0; i < cardsData.length; i++) {
-            card = cloneCard(baseFront, cardsData[i], String(i + 1));
-            [x, y] = addCard(output, card, x, y);
-            fitCardText(card, cardsData[i], String(i + 1), warnings);
-        }
+            const cardNum = String(i + 1);
+            const frontCard = cloneCard(baseFront, cardsData[i], cardNum);
+            fitCardText(frontCard, cardsData[i], cardNum, warnings);
 
-        card = (baseBack.clone() as Board);
-        card.x = output.width - card.width;
-        card.y = output.y + output.height - card.height;
-        output.appendChild(card);
+            const backCard = cloneCard(baseBack, cardsData[i], cardNum);
+            fitCardText(backCard, cardsData[i], cardNum, warnings);
+
+            const cardPair = createCardPairSheet(frontCard, backCard, false, false);
+            [x, y] = addCard(output, cardPair, x, y);
+        }
     } else if (type == "printplay") {
+        const frontSource = baseFront;
+        const backSource = baseBack;
+
         tmpFront = penpot.createBoard();
         tmpFront.name = "tmpFront";
         tmpFront.resize(baseFront.width, baseFront.height * 2);
-        let backClone = baseBack.clone();
-        backClone.rotate(180);
-        tmpFront.appendChild(backClone);
-        backClone.x = 0;
-        backClone.y = 0;
-        let frontClone = baseFront.clone();
-        tmpFront.appendChild(frontClone);
-        frontClone.x = 0;
-        frontClone.y = frontClone.height;
+        const templateBack = baseBack.clone() as Board;
+        templateBack.rotate(180);
+        tmpFront.appendChild(templateBack);
+        templateBack.x = 0;
+        templateBack.y = 0;
+        const templateFront = baseFront.clone() as Board;
+        tmpFront.appendChild(templateFront);
+        templateFront.x = 0;
+        templateFront.y = templateFront.height;
         if (cutMarks) {
             tmpFront = addCutMarks(tmpFront, false);
         }
@@ -581,9 +575,13 @@ function forgeCards(cardsData: Record<string, any>[], type: string, cutMarks: bo
                     y += gapV;
                 }
 
-                card = cloneCard(baseFront, cardsData[numCard], String(numCard + 1));
+                const cardNum = String(numCard + 1);
+                const frontCard = cloneCard(frontSource, cardsData[numCard], cardNum);
+                const backCard = cloneCard(backSource, cardsData[numCard], cardNum);
+                fitCardText(frontCard, cardsData[numCard], cardNum, warnings);
+                fitCardText(backCard, cardsData[numCard], cardNum, warnings);
+                card = createCardPairSheet(frontCard, backCard, true, cutMarks);
                 [x, y] = addCard(page, card, x, y);
-                fitCardText(card, cardsData[numCard], String(numCard + 1), warnings);
                 x += gapH;
                 numCard++;
                 if (numCard >= cardsData.length) {
