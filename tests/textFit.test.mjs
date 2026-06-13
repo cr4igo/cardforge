@@ -41,4 +41,23 @@ const overflowingShape = createFakeText((fontSize) => ({
 assert.equal(fitTextToBox(overflowingShape, { min: 6, max: 20 }), false);
 assert.equal(Number(overflowingShape.fontSize), 6);
 
+const staleBoundsShape = {
+  width: 100,
+  height: 60,
+  fontSize: "10",
+  growType: "auto-height",
+  characters: "Wie sieht ein guter Plan fuer eine neue Karte aus?",
+  lineHeight: "120%",
+  get textBounds() {
+    return {
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 60,
+    };
+  },
+};
+assert.equal(fitTextToBox(staleBoundsShape, { min: 6, max: 40 }), true);
+assert.ok(Number(staleBoundsShape.fontSize) < 40);
+
 console.log("text fit tests passed");

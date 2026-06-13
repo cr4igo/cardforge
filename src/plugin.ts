@@ -1,7 +1,7 @@
 
 import type { Shape, Board, Text } from '@penpot/plugin-types';
 import { parseFieldName } from './fieldMetadata';
-import { fitTextToBox, type FittableText } from './textFit';
+import { fitTextToBoxWithDetails, type FittableText } from './textFit';
 import type { PluginUIEvent, DeckEvent, CardField, ForgeWarning } from './model';
 
 
@@ -194,7 +194,7 @@ function createImage(data: Uint8Array, mimeType: string, num: number, name: stri
 }
 
 
-function cloneCard(card: Shape, cardData: Record<string, any>, cardNum: string, warnings: ForgeWarning[]): Board {
+function cloneCard(card: Shape, cardData: Record<string, any>, cardNum: string): Board {
     const card2 = card.clone() as Board;
     card2.name = "card" + cardNum.padStart(2, '0');
 
@@ -204,15 +204,7 @@ function cloneCard(card: Shape, cardData: Record<string, any>, cardNum: string, 
             if (field) {
                 if (field.type === "text") {
                     const textField = field as Text;
-                    const metadata = parseFieldName(textField.name);
                     textField.characters = cardData[prop];
-                    if (metadata.fit && !fitTextToBox((textField as unknown as FittableText), metadata.fit)) {
-                        warnings.push({
-                            cardNum: Number(cardNum),
-                            fieldName: metadata.name,
-                            minFontSize: metadata.fit.min,
-                        });
-                    }
                 } else {
                     const imageId = cardData[prop].split("|")[0];
                     const image = penpot.currentPage?.getShapeById(imageId);
@@ -225,6 +217,51 @@ function cloneCard(card: Shape, cardData: Record<string, any>, cardNum: string, 
     }
 
     return card2;
+}
+
+function fitCardText(card: Board, cardData: Record<string, any>, cardNum: string, warnings: ForgeWarning[]) {
+    for (const prop in cardData) {
+        if (!Object.prototype.hasOwnProperty.call(cardData, prop)) {
+            continue;
+        }
+
+        const field = findByFieldName(card, prop);
+        if (!field || field.type !== "text") {
+            continue;
+        }
+
+        const textField = field as Text;
+        const metadata = parseFieldName(textField.name);
+        if (!metadata.fit) {
+            continue;
+        }
+
+        const result = fitTextToBoxWithDetails((textField as unknown as FittableText), metadata.fit);
+        console.log("[CardForge fit]", {
+            cardNum: Number(cardNum),
+            fieldName: metadata.name,
+            shapeName: metadata.shapeName,
+            characters: textField.characters,
+            box: { width: textField.width, height: textField.height },
+            fit: metadata.fit,
+            result: {
+                fits: result.fits,
+                fontSize: result.fontSize,
+                reason: result.reason,
+                usedEstimate: result.usedEstimate,
+                staleTextBounds: result.staleTextBounds,
+            },
+            steps: result.steps,
+        });
+
+        if (!result.fits) {
+            warnings.push({
+                cardNum: Number(cardNum),
+                fieldName: metadata.name,
+                minFontSize: metadata.fit.min,
+            });
+        }
+    }
 }
 
 
@@ -355,8 +392,9 @@ function forgeCards(cardsData: Record<string, any>[], type: string, cutMarks: bo
 
     if ((type == "tabletop") || (type == "standard")) {
         for (let i = 0; i < cardsData.length; i++) {
-            card = cloneCard(baseFront, cardsData[i], String(i + 1), warnings);
+            card = cloneCard(baseFront, cardsData[i], String(i + 1));
             [x, y] = addCard(output, card, x, y);
+            fitCardText(card, cardsData[i], String(i + 1), warnings);
         }
 
         card = (baseBack.clone() as Board);
@@ -431,8 +469,9 @@ function forgeCards(cardsData: Record<string, any>[], type: string, cutMarks: bo
                     y += gapV;
                 }
 
-                card = cloneCard(baseFront, cardsData[numCard], String(numCard + 1), warnings);
+                card = cloneCard(baseFront, cardsData[numCard], String(numCard + 1));
                 [x, y] = addCard(page, card, x, y);
+                fitCardText(card, cardsData[numCard], String(numCard + 1), warnings);
                 x += gapH;
                 numCard++;
                 if (numCard >= cardsData.length) {
