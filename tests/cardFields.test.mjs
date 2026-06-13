@@ -30,6 +30,15 @@ assert.deepEqual(
   ],
 );
 
+assert.deepEqual(
+  collectCardFields([front, back]).map((field) => ({ name: field.name, side: field.side })),
+  [
+    { name: "#title", side: "Front" },
+    { name: "#art", side: "Front" },
+    { name: "#backNote", side: "Back" },
+  ],
+);
+
 const frontTarget = structuredClone(front);
 const backTarget = structuredClone(back);
 const textAssignments = [];
