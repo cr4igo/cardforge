@@ -535,6 +535,12 @@ h3 {
   line-height: 50px;
   position: relative;
   width: 50px;
+  z-index: 0;
+}
+
+.card-source:hover,
+.card-source.card-source-popover-up {
+  z-index: 20;
 }
 
 .card-source-button {
@@ -560,6 +566,11 @@ h3 {
   position: absolute;
   top: 42px;
   z-index: 10;
+}
+
+.card-source.card-source-popover-up .card-source-popover {
+  bottom: 42px;
+  top: auto;
 }
 
 .card-source:hover .card-source-popover {

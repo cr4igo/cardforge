@@ -301,7 +301,26 @@ function createCardSourceCell(cardData: any) {
   popover.appendChild(jump);
   cell.appendChild(popover);
 
+  cell.addEventListener("mouseenter", () => {
+    positionCardSourcePopover(cell);
+  });
+  cell.addEventListener("mouseleave", () => {
+    cell.classList.remove("card-source-popover-up");
+  });
+
   return cell;
+}
+
+function positionCardSourcePopover(cell: HTMLElement) {
+  if (!cardList) {
+    return;
+  }
+
+  const listRect = cardList.getBoundingClientRect();
+  const cellRect = cell.getBoundingClientRect();
+  const spaceBelow = listRect.bottom - cellRect.bottom;
+
+  cell.classList.toggle("card-source-popover-up", spaceBelow < 120);
 }
 
 function jumpToCardSource(cardData: any) {
