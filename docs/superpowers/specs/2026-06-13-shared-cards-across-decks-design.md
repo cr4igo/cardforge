@@ -21,6 +21,8 @@ Use a two-level model:
 
 Cards are stored once per Penpot file. Each deck page stores ordered card reference objects. A reference points to a shared card and may carry page-local field extensions. If a user needs a shared card definition change, they must fork the card into a new record.
 
+This file-level library is the single source of truth for `cardsData`; page data only adds deck-specific references and field extensions.
+
 This is the recommended design because it preserves a single source of truth for cards while keeping deck composition page-local.
 
 ## Goals
